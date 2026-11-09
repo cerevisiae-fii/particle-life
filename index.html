@@ -36,6 +36,9 @@ input[type=range]{width:100%;height:30px;accent-color:#6ea8ff}
   <div id="side">
     <select id="pre"></select>
     <div class="row"><button id="play">⏸</button><button id="rnd">🎲</button></div>
+    <div class="row"><button id="savePreset">★ プリセット保存</button><button id="resetBoard">盤面リセット</button></div>
+    <button id="perturb">摂動モード：OFF</button>
+    <div class="small">ONにすると、パレットの相互作用値が約0.6秒ごとに少しずつランダムに変化します。</div>
     <div id="lab"></div>
     <input type="range" id="sl" min="-1" max="1" step="0.01">
     <div class="small">タップ:選択 / 長押し:複数選択<br>盤面スワイプで乱す</div>
@@ -75,6 +78,76 @@ const PRESETS={
  '雲':P(6,(i,j)=>Math.cos((j-i)*2.1)*0.9,0.06,0.06,0.45,0.3),
  '8色カオス':P(8,(i,j,K)=>i==j?0.3:cyc(i,j,K)<K/2?0.5:-0.5,0.05,0.05,0.4,0.3)
 };
+
+
+/* user presets + share code */
+const USER_PRE_KEY='particlelife.userPresets.v1';
+function readUserPresets(){
+ try{const x=JSON.parse(localStorage.getItem(USER_PRE_KEY)||'{}');return x&&typeof x==='object'&&!Array.isArray(x)?x:{}}
+ catch(e){return {}}
+}
+let userPresets=readUserPresets();
+function currentConfig(){
+ return {v:1,N,K,p:{...p},M:Array.from({length:K*K},(_,n)=>Math.round(M[((n/K)|0)*MK+n%K]*100)/100)};
+}
+function validConfig(x){
+ if(!x||x.v!==1||!Number.isInteger(x.N)||x.N<1000||x.N>15000||
+    !Number.isInteger(x.K)||x.K<2||x.K>8||!x.p||!Array.isArray(x.M)||x.M.length!==x.K*x.K) return false;
+ const ranges={rmax:[0.02,0.12],dt:[0.005,0.05],half:[0.005,0.2],F:[0.05,3],beta:[0.1,0.6],size:[1,5]};
+ for(const [k,[a,b]] of Object.entries(ranges))if(!Number.isFinite(x.p[k])||x.p[k]<a||x.p[k]>b)return false;
+ return x.M.every(v=>Number.isFinite(v)&&v>=-1&&v<=1);
+}
+function applyConfig(x){
+ if(!validConfig(x)){alert('コードまたはプリセットの内容が正しくありません。');return false}
+ N=x.N;K=x.K;Object.assign(p,x.p);
+ M.fill(0);
+ for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=x.M[i*K+j];
+ sel=new Set([1]);multi=false;init();buildMat();refresh();syncMenu();
+ return true;
+}
+function refreshPresetOptions(){
+ const chosen=pre.value;
+ pre.innerHTML='';
+ for(const k in PRESETS){const o=document.createElement('option');o.textContent='📂 '+k;o.value='builtin:'+k;pre.appendChild(o)}
+ for(const k of Object.keys(userPresets).sort((a,b)=>a.localeCompare(b,'ja'))){
+  const o=document.createElement('option');o.textContent='★ '+k;o.value='user:'+k;pre.appendChild(o);
+ }
+ if([...pre.options].some(o=>o.value===chosen))pre.value=chosen;
+ else pre.value='builtin:循環追跡';
+}
+function loadUserPreset(name){
+ const x=userPresets[name];if(x)applyConfig(x);
+}
+function encodeShareCode(x){
+ const bytes=new TextEncoder().encode(JSON.stringify(x));
+ let binary='';for(const b of bytes)binary+=String.fromCharCode(b);
+ return 'PL1-'+btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodeShareCode(code){
+ const raw=code.trim().replace(/^PL1-/,'').replace(/-/g,'+').replace(/_/g,'/');
+ const binary=atob(raw+'='.repeat((4-raw.length%4)%4));
+ const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
+ return JSON.parse(new TextDecoder().decode(bytes));
+}
+function saveUserPreset(){
+ const name=prompt('プリセット名を入力してください');
+ if(name===null)return;
+ const key=name.trim();if(!key){alert('名前を入力してください。');return}
+ userPresets[key]=currentConfig();
+ try{localStorage.setItem(USER_PRE_KEY,JSON.stringify(userPresets));refreshPresetOptions();pre.value='user:'+key;alert('「'+key+'」を保存しました。')}
+ catch(e){alert('保存できませんでした。ブラウザの保存容量や設定を確認してください。')}
+}
+async function shareConfigCode(){
+ const code=encodeShareCode(currentConfig());
+ try{await navigator.clipboard.writeText(code);alert('共有コードをコピーしました。\\n'+code)}
+ catch(e){prompt('このコードをコピーして共有してください。',code)}
+}
+function importConfigCode(){
+ const code=prompt('共有コード（PL1-...）を貼り付けてください');
+ if(code===null||!code.trim())return;
+ try{const x=decodeShareCode(code);if(applyConfig(x)){pre.selectedIndex=-1;alert('設定とパレットを読み込みました。')}}
+ catch(e){alert('コードを読み込めませんでした。正しい共有コードか確認してください。')}
+}
 
 function init(){
  px=new Float32Array(N);py=new Float32Array(N);vx=new Float32Array(N);vy=new Float32Array(N);
@@ -211,15 +284,24 @@ sl.oninput=()=>{
 
 /* presets / buttons */
 const pre=document.getElementById('pre');
-for(const k in PRESETS){const o=document.createElement('option');o.textContent='📂 '+k;o.value=k;pre.appendChild(o)}
+refreshPresetOptions();
 function setK(k){K=k;sel=new Set([1]);multi=false;init();buildMat();refresh()}
 function loadPreset(name){
- const q=PRESETS[name];K=q.k;
+ const q=PRESETS[name];if(!q)return;
+ K=q.k;
  for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=Math.round(Math.max(-1,Math.min(1,q.f(i,j,K)))*100)/100;
  Object.assign(p,{rmax:q.rmax,half:q.half,F:q.F,beta:q.beta});
  sel=new Set([1]);multi=false;init();buildMat();refresh();syncMenu();
 }
-pre.onchange=()=>loadPreset(pre.value);
+pre.onchange=()=>{
+ if(pre.value.startsWith('user:'))loadUserPreset(pre.value.slice(5));
+ else if(pre.value.startsWith('builtin:'))loadPreset(pre.value.slice(8));
+};
+document.getElementById('savePreset').onclick=saveUserPreset;
+document.getElementById('resetBoard').onclick=()=>{
+ if(!confirm('粒子を初期状態のように均一に再配置しますか？'))return;
+ init();
+};
 document.getElementById('rnd').onclick=()=>{
  for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=Math.round((Math.random()*2-1)*100)/100;
  p.rmax=0.04+Math.random()*0.04;p.half=0.02+Math.random()*0.1;p.F=0.3+Math.random()*0.9;p.beta=0.2+Math.random()*0.25;
@@ -228,6 +310,26 @@ document.getElementById('rnd').onclick=()=>{
 let run=true;const pb=document.getElementById('play');
 pb.onclick=()=>{run=!run;pb.textContent=run?'⏸':'▶'};
 
+/* perturbation: slowly random-walk palette matrix values */
+let perturbOn=false, perturbTick=0;
+const perturbButton=document.getElementById('perturb');
+function perturbPalette(){
+ // Nudge a few active palette cells slightly; keep values within [-1, 1].
+ const total=K*K;
+ const count=Math.max(1,Math.ceil(total*0.035));
+ for(let n=0;n<count;n++){
+  const i=(Math.random()*K)|0,j=(Math.random()*K)|0,k=i*MK+j;
+  const delta=(Math.random()*2-1)*0.035;
+  M[k]=Math.max(-1,Math.min(1,M[k]+delta));
+ }
+ refresh();
+}
+perturbButton.onclick=()=>{
+ perturbOn=!perturbOn;
+ perturbButton.textContent=perturbOn?'摂動モード：ON':'摂動モード：OFF';
+ perturbButton.style.borderColor=perturbOn?'#6ea8ff':'';
+};
+
 /* menu */
 const PDEF=[
  ['N','点数',1000,15000,500],['K','色の種数',2,8,1],['rmax','作用半径',0.02,0.12,0.005],
@@ -235,6 +337,12 @@ const PDEF=[
  ['F','力の強さ',0.05,3,0.05],['beta','斥力域',0.1,0.6,0.01],['size','点の大きさ',1,5,0.5]
 ];
 const menu=document.getElementById('menu'),mrows={};
+const presetTools=document.createElement('div');
+presetTools.className='row';presetTools.style.margin='4px 0 10px';
+for(const [label,fn] of [['コード共有',shareConfigCode],['コード読込',importConfigCode]]){
+ const b=document.createElement('button');b.textContent=label;b.style.flex='1';b.onclick=fn;presetTools.appendChild(b);
+}
+menu.appendChild(presetTools);
 const getP=k=>k==='N'?N:k==='K'?K:p[k];
 const fmt=(v,st)=>st>=1?String(Math.round(v)):v.toFixed(st<0.01?3:2);
 for(const [key,name,mn,mx,st] of PDEF){
@@ -267,7 +375,11 @@ mb.onclick=()=>{
 
 loadPreset('循環追跡');
 addEventListener('resize',resize);resize();
-(function loop(){if(run)step();draw();requestAnimationFrame(loop)})();
+(function loop(){
+ if(run)step();
+ if(perturbOn && ++perturbTick>=36){perturbTick=0;perturbPalette()}
+ draw();requestAnimationFrame(loop);
+})();
 </script>
 </body>
 </html>
