@@ -18,7 +18,6 @@ body{margin:0;position:relative;background:var(--bg);color:var(--fg);font:14px/1
 #mat .c{cursor:pointer;touch-action:manipulation}
 #mat .sel{outline:2px solid #fff;outline-offset:-2px}
 #side{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
-#survivorLink{display:block;text-align:center;text-decoration:none;background:#176d83;color:#fff;border:1px solid #42c6df;border-radius:8px;padding:9px;font-weight:700}
 select,button{background:#23233a;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:9px;font-size:14px;min-width:0;width:100%}
 button:active{background:#33335a}
 .row{display:flex;gap:6px}
@@ -36,7 +35,6 @@ input[type=range]{width:100%;height:30px;accent-color:#6ea8ff}
   <div id="mat"></div>
   <div id="side">
     <select id="pre"></select>
-    <a id="survivorLink" href="particle_survivor.html">✦ パーティクルサバイバー</a>
     <div class="row"><button id="play">⏸</button><button id="rnd">🎲</button></div>
     <div class="row"><button id="savePreset">★ プリセット保存</button><button id="resetBoard">盤面リセット</button></div>
     <button id="perturb">摂動モード：OFF</button>
@@ -286,15 +284,18 @@ sl.oninput=()=>{
 
 /* presets / buttons */
 const pre=document.getElementById('pre');
+for(const k in PRESETS){const o=document.createElement('option');o.textContent='📂 '+k;o.value=k;pre.appendChild(o)}
 refreshPresetOptions();
 function setK(k){K=k;sel=new Set([1]);multi=false;init();buildMat();refresh()}
 function loadPreset(name){
+ const q=PRESETS[name];K=q.k;
  const q=PRESETS[name];if(!q)return;
  K=q.k;
  for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=Math.round(Math.max(-1,Math.min(1,q.f(i,j,K)))*100)/100;
  Object.assign(p,{rmax:q.rmax,half:q.half,F:q.F,beta:q.beta});
  sel=new Set([1]);multi=false;init();buildMat();refresh();syncMenu();
 }
+pre.onchange=()=>loadPreset(pre.value);
 pre.onchange=()=>{
  if(pre.value.startsWith('user:'))loadUserPreset(pre.value.slice(5));
  else if(pre.value.startsWith('builtin:'))loadPreset(pre.value.slice(8));
@@ -377,6 +378,7 @@ mb.onclick=()=>{
 
 loadPreset('循環追跡');
 addEventListener('resize',resize);resize();
+(function loop(){if(run)step();draw();requestAnimationFrame(loop)})();
 (function loop(){
  if(run)step();
  if(perturbOn && ++perturbTick>=36){perturbTick=0;perturbPalette()}
