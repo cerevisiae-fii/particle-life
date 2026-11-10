@@ -12,12 +12,10 @@ body{margin:0;position:relative;background:var(--bg);color:var(--fg);font:14px/1
 #wrap{position:relative;margin:0 auto;flex:none}
 #cv{display:block;background:#000;touch-action:none}
 #mbtn{position:absolute;top:6px;right:6px;width:40px;height:40px;padding:0;font-size:20px;border-radius:50%;background:rgba(30,30,50,.75);z-index:6}
-#panel{flex:1;min-height:0;background:var(--panel);border-top:1px solid var(--line);padding:8px;display:flex;gap:10px;align-items:flex-start}
-#mat{width:var(--m);height:var(--m);flex:none;display:grid;gap:2px}
+#panel{flex:1;min-height:0;background:var(--panel);border-top:1px solid var(--line);padding:8px;display:flex;gap:10px;align-items:flex-start;overflow-y:auto}
+#mat{width:var(--m);height:var(--m);flex:none;display:grid;gap:2px;touch-action:none}
 #mat div{border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px}
-#mat .hdr{cursor:pointer;touch-action:manipulation;background:#23233a}
-#mat .hdr:active{background:#33335a}
-#mat .c{cursor:pointer;touch-action:manipulation}
+#mat .c,#mat .h{cursor:pointer}
 #mat .sel{outline:2px solid #fff;outline-offset:-2px}
 #side{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
 select,button{background:#23233a;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:9px;font-size:14px;min-width:0;width:100%}
@@ -25,9 +23,13 @@ button:active{background:#33335a}
 .row{display:flex;gap:6px}
 #lab{font-size:15px;font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;height:30px;accent-color:#6ea8ff}
-.small{font-size:11px;opacity:.7;line-height:1.3}
+.small{font-size:12px;opacity:.65}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chips button{flex:1 1 auto;width:auto;padding:6px 8px;font-size:12px}
+.chips button.on{border-color:#6ea8ff;color:#6ea8ff}
+.rel{display:grid;grid-template-columns:2.8em 1fr;align-items:center;gap:6px}
 #menu{position:absolute;left:0;right:0;bottom:0;top:300px;background:var(--panel);border-top:1px solid var(--line);padding:6px 14px;overflow-y:auto;display:none;z-index:5}
-.mrow{display:grid;grid-template-columns:6.5em 1fr 3.6em;align-items:center;gap:8px}
+.mrow{display:grid;grid-template-columns:7.8em 1fr 3.6em;align-items:center;gap:8px}
 .mrow span:last-child{text-align:right;font-variant-numeric:tabular-nums}
 </style>
 </head>
@@ -42,7 +44,7 @@ input[type=range]{width:100%;height:30px;accent-color:#6ea8ff}
     <button id="perturb">摂動モード：OFF</button>
     <div id="lab"></div>
     <input type="range" id="sl" min="-1" max="1" step="0.01">
-    <div class="small">タップ:選択 / 長押し:複数 / 見出し:行・列一括<br>スワイプ:乱す / 長押し:バースト / 2連長押し:磁石</div>
+    <div class="chips" id="selt"></div>
   </div>
 </div>
 <div id="menu"></div>
@@ -51,7 +53,7 @@ const MK=8;
 const COL=['#ff4d4d','#ffb020','#f2e94e','#4dd96a','#4db5ff','#c77dff','#f0f0f0','#c08a5a'];
 const EMO=['🔴','🟠','🟡','🟢','🔵','🟣','⚪','🟤'];
 let K=6,N=5000;
-let p={rmax:0.05,half:0.05,F:0.4,beta:0.3,dt:0.02,size:2};
+let p={rmax:0.05,half:0.05,F:0.4,beta:0.3,dt:0.02,size:2,burstR:0.25,magR:0.3};
 const M=new Float32Array(MK*MK);
 let px,py,vx,vy,tp,cellOf,order,start,ptr,lastC=0;
 let sel=new Set([1]),multi=false;
@@ -79,6 +81,7 @@ const PRESETS={
  '雲':P(6,(i,j)=>Math.cos((j-i)*2.1)*0.9,0.06,0.06,0.45,0.3),
  '8色カオス':P(8,(i,j,K)=>i==j?0.3:cyc(i,j,K)<K/2?0.5:-0.5,0.05,0.05,0.4,0.3)
 };
+
 
 /* user presets + share code */
 const USER_PRE_KEY='particlelife.userPresets.v1';
@@ -139,7 +142,7 @@ function saveUserPreset(){
 }
 async function shareConfigCode(){
  const code=encodeShareCode(currentConfig());
- try{await navigator.clipboard.writeText(code);alert('共有コードをコピーしました。\n'+code)}
+ try{await navigator.clipboard.writeText(code);alert('共有コードをコピーしました。\\n'+code)}
  catch(e){prompt('このコードをコピーして共有してください。',code)}
 }
 function importConfigCode(){
@@ -195,7 +198,7 @@ function step(){
  }
 }
 
-/* canvas + interaction gestures (Swipe, Burst, Magnet) */
+/* canvas + swipe */
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),wrap=document.getElementById('wrap');
 let S=300,dpr=1;
 function resize(){
@@ -219,85 +222,264 @@ function draw(){
   for(let i=Math.floor(t*per);i<Math.floor((t+1)*per);i++)ctx.fillRect(px[i]*W|0,py[i]*W|0,sz,sz);
  }
 }
-
+/* board interactions: swipe / long-press burst / double-tap-hold magnet */
+const FX={hold:420,move:10,tap:250,dtap:320,dtapPx:40,burstD:0.3,magV:3};
+const ptrs=new Map(),fxs=[];let lastTap=null;
+const wrap1=d=>d>0.5?d-1:d<-0.5?d+1:d,fr=v=>v-Math.floor(v);
+const buzz=n=>{if(navigator.vibrate)navigator.vibrate(n)};
 function wp(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
-
-let touchState={
- isDown:false,
- pos:[0,0],
- lastPos:[0,0],
- mode:'normal', // 'normal', 'burst', 'magnet'
- holdTimer:null,
- lastTapTime:0
-};
-
-function handleTouchUpdate(){
- if(!touchState.isDown)return;
- const q=touchState.pos;
- const R=0.22;
- 
- if(touchState.mode==='burst'){
-  // 長押し：バースト（中心から強い外向きの力）
-  for(let i=0;i<N;i++){
-   let dx=px[i]-q[0],dy=py[i]-q[1];
-   if(dx>0.5)dx-=1;else if(dx<-0.5)dx+=1;
-   if(dy>0.5)dy-=1;else if(dy<-0.5)dy+=1;
-   const d=Math.sqrt(dx*dx+dy*dy);if(d>=R||d<1e-5)continue;
-   const w=(1-d/R)*18;
-   vx[i]+=(dx/d)*w;vy[i]+=(dy/d)*w;
-  }
- }else if(touchState.mode==='magnet'){
-  // ダブルタップ長押し：マグネット（中心に引き寄せる力）
-  for(let i=0;i<N;i++){
-   let dx=px[i]-q[0],dy=py[i]-q[1];
-   if(dx>0.5)dx-=1;else if(dx<-0.5)dx+=1;
-   if(dy>0.5)dy-=1;else if(dy<-0.5)dy+=1;
-   const d=Math.sqrt(dx*dx+dy*dy);if(d>=R||d<1e-5)continue;
-   const w=(1-d/R)*12;
-   vx[i]-=(dx/d)*w;vy[i]-=(dy/d)*w;
-  }
- }else{
-  // スワイプ（前フレームからの移動ベクトルによる力）
-  const mx=q[0]-touchState.lastPos[0],my=q[1]-touchState.lastPos[1];
-  touchState.lastPos=[q[0],q[1]];
-  if(Math.abs(mx)>1e-5||Math.abs(my)>1e-5){
-   const R_swipe=0.14;
-   for(let i=0;i<N;i++){
-    let dx=px[i]-q[0],dy=py[i]-q[1];
-    if(dx>0.5)dx-=1;else if(dx<-0.5)dx+=1;
-    if(dy>0.5)dy-=1;else if(dy<-0.5)dy+=1;
-    const d=Math.sqrt(dx*dx+dy*dy);if(d>=R_swipe)continue;
-    const w=(1-d/R_swipe)*40;
-    vx[i]+=mx*w;vy[i]+=my*w;
-   }
+function swipeAt(qx,qy,mx,my){
+ const R=0.14;qx=fr(qx);qy=fr(qy);
+ for(let i=0;i<N;i++){
+  const dx=wrap1(px[i]-qx),dy=wrap1(py[i]-qy),d=Math.sqrt(dx*dx+dy*dy);if(d>=R)continue;
+  const w=(1-d/R)*40;vx[i]+=mx*w;vy[i]+=my*w;
+ }
+}
+function burstAt(x,y){
+ x=fr(x);y=fr(y);
+ const R=p.burstR,ff=Math.pow(0.5,p.dt/p.half),v0=Math.min(40,FX.burstD*(1-ff)/(p.dt*ff));
+ for(let i=0;i<N;i++){
+  const dx=wrap1(px[i]-x),dy=wrap1(py[i]-y),d=Math.hypot(dx,dy);if(d>=R)continue;
+  const w=(1-d/R)*v0;
+  if(d<1e-4){const a=Math.random()*6.283;vx[i]+=Math.cos(a)*w;vy[i]+=Math.sin(a)*w}
+  else{vx[i]+=dx/d*w;vy[i]+=dy/d*w}
+ }
+ fxs.push({x,y,t:performance.now()});
+}
+function magnetAt(x,y){
+ x=fr(x);y=fr(y);
+ const R=p.magR,a=FX.magV*(1-Math.pow(0.5,p.dt/p.half));
+ for(let i=0;i<N;i++){
+  const dx=wrap1(x-px[i]),dy=wrap1(y-py[i]),d=Math.hypot(dx,dy);if(d>=R||d<1e-5)continue;
+  const w=a*(1-d/R)*Math.min(1,d/0.02)/d;vx[i]+=dx*w;vy[i]+=dy*w;
+ }
+}
+function drawFx(){
+ const W=cv.width,now=performance.now();ctx.lineWidth=2*dpr;
+ for(let n=fxs.length-1;n>=0;n--){
+  const f=fxs[n],a=(now-f.t)/450;if(a>=1){fxs.splice(n,1);continue}
+  ctx.strokeStyle='rgba(255,255,255,'+(0.8*(1-a)).toFixed(2)+')';
+  ctx.beginPath();ctx.arc(f.x*W,f.y*W,p.burstR*W*(0.15+0.85*a),0,6.283);ctx.stroke();
+ }
+ for(const s of ptrs.values()){
+  const age=now-s.t0,x=fr(s.x)*W,y=fr(s.y)*W;
+  if(s.mode==='pending'&&age>150){
+   ctx.strokeStyle='rgba(255,255,255,.6)';ctx.beginPath();
+   ctx.arc(x,y,0.03*W,-1.5708,-1.5708+6.283*Math.min(1,(age-150)/(FX.hold-150)));ctx.stroke();
+  }else if(s.mode==='magnet'){
+   ctx.strokeStyle='rgba(110,168,255,.6)';ctx.beginPath();ctx.arc(x,y,p.magR*W,0,6.283);ctx.stroke();
+   ctx.fillStyle='rgba(110,168,255,.35)';ctx.beginPath();ctx.arc(x,y,0.012*W,0,6.283);ctx.fill();
   }
  }
 }
-
+cv.addEventListener('contextmenu',e=>e.preventDefault());
 cv.addEventListener('pointerdown',e=>{
- cv.setPointerCapture(e.pointerId);
- const now=Date.now();
- const q=wp(e);
- touchState.isDown=true;
- touchState.pos=q;
- touchState.lastPos=q;
- touchState.mode='normal';
-
- const isDoubleTap=(now-touchState.lastTapTime)<320;
- touchState.lastTapTime=now;
-
- clearTimeout(touchState.holdTimer);
- touchState.holdTimer=setTimeout(()=>{
-  if(!touchState.isDown)return;
-  if(isDoubleTap){
-   touchState.mode='magnet';
-  }else{
-   touchState.mode='burst';
-  }
-  if(navigator.vibrate)navigator.vibrate(20);
- },250);
+ e.preventDefault();cv.setPointerCapture(e.pointerId);
+ const q=wp(e),now=performance.now();
+ const s={id:e.pointerId,cx:e.clientX,cy:e.clientY,x:q[0],y:q[1],t0:now,mode:'pending'};
+ if(lastTap&&now-lastTap.t<FX.dtap&&Math.hypot(e.clientX-lastTap.cx,e.clientY-lastTap.cy)<FX.dtapPx){
+  s.mode='held';lastTap=null;burstAt(s.x,s.y);buzz(25);
+ }else{
+  s.timer=setTimeout(()=>{if(s.mode==='pending'){s.mode='magnet';buzz(10)}},FX.hold);
+ }
+ ptrs.set(e.pointerId,s);
 });
-
 cv.addEventListener('pointermove',e=>{
- if(!touchState.isDown)return;
- touchState.pos
+ const s=ptrs.get(e.pointerId);if(!s)return;
+ const q=wp(e);
+ if(s.mode==='pending'){
+  if(Math.hypot(e.clientX-s.cx,e.clientY-s.cy)<FX.move)return;
+  s.mode='swipe';clearTimeout(s.timer);
+ }
+ if(s.mode==='swipe'){swipeAt(q[0],q[1],q[0]-s.x,q[1]-s.y);s.x=q[0];s.y=q[1]}
+ else if(s.mode==='magnet'){s.x=q[0];s.y=q[1]}
+});
+function pend(e){
+ const s=ptrs.get(e.pointerId);if(!s)return;
+ clearTimeout(s.timer);ptrs.delete(e.pointerId);
+ const now=performance.now();
+ if(e.type==='pointerup'&&s.mode==='pending'&&now-s.t0<FX.tap)lastTap={t:now,cx:s.cx,cy:s.cy};
+}
+for(const t of ['pointerup','pointercancel','lostpointercapture'])cv.addEventListener(t,pend);
+
+/* matrix UI */
+const mat=document.getElementById('mat'),sl=document.getElementById('sl'),lab=document.getElementById('lab');
+const cells=[];
+function colorOf(v){return 'hsl('+Math.round((Math.max(-1,Math.min(1,v))+1)/2*120)+',70%,38%)'}
+function toggle(k){
+ if(sel.has(k))sel.delete(k);else sel.add(k);
+ if(sel.size===0){sel.add(k);multi=false}
+ refresh();
+}
+function buildMat(){
+ mat.innerHTML='';cells.length=0;
+ mat.style.gridTemplateColumns=mat.style.gridTemplateRows='repeat('+(K+1)+',1fr)';
+ const mk=(txt,t,i,j,cls)=>{const d=document.createElement('div');d.textContent=txt;d.className=cls;d.dataset.t=t;d.dataset.i=i;d.dataset.j=j;mat.appendChild(d);return d};
+ mk('▦','a',0,0,'h');
+ for(let j=0;j<K;j++)mk(EMO[j],'col',0,j,'h');
+ for(let i=0;i<K;i++){
+  mk(EMO[i],'row',i,0,'h');
+  for(let j=0;j<K;j++)cells[i*MK+j]=mk('','c',i,j,'c');
+ }
+}
+/* tile selection: tap / drag-rect / header row-col-all / long-press multi mode */
+const cellAt=(x,y)=>{const el=document.elementFromPoint(x,y);return el&&el.parentNode===mat?el:null};
+let md=null;
+mat.addEventListener('contextmenu',e=>e.preventDefault());
+mat.addEventListener('pointerdown',e=>{
+ if(md)return;const el=cellAt(e.clientX,e.clientY);if(!el)return;
+ const d=el.dataset,i=+d.i,j=+d.j;
+ md={id:e.pointerId,t:d.t,i,j,k:i*MK+j,moved:false,lpF:false,base:new Set(sel)};
+ if(d.t==='c')md.lp=setTimeout(()=>{
+  if(md.moved)return;md.lpF=true;
+  if(multi)multi=false;else{multi=true;md.paint=true;sel.add(md.k)}
+  refresh();if(navigator.vibrate)navigator.vibrate(15);
+ },420);
+});
+mat.addEventListener('pointermove',e=>{
+ if(!md||e.pointerId!==md.id||md.t!=='c')return;
+ const el=cellAt(e.clientX,e.clientY);if(!el||el.dataset.t!=='c')return;
+ const k=(+el.dataset.i)*MK+(+el.dataset.j);
+ if(!md.moved){
+  if(k===md.k)return;
+  md.moved=true;clearTimeout(md.lp);
+  if(multi&&md.paint===undefined){md.paint=!md.base.has(md.k);md.paint?sel.add(md.k):sel.delete(md.k)}
+ }
+ if(multi&&md.paint!==undefined){md.paint?sel.add(k):sel.delete(k);refresh()}
+});
+function mend(e){
+ if(!md||e.pointerId!==md.id)return;
+ clearTimeout(md.lp);const m=md;md=null;
+ if(m.t==='c'&&!sel.size){sel.add(m.k);refresh()}
+ if(e.type==='pointercancel'||m.moved||m.lpF)return;
+ if(m.t==='c'){const k=m.i*MK+m.j;if(multi)toggle(k);else{sel=new Set([k]);refresh()}return}
+ let n=new Set();
+ for(let r=0;r<K;r++)for(let c=0;c<K;c++)if(m.t==='a'||(m.t==='row'&&r===m.i)||(m.t==='col'&&c===m.j))n.add(r*MK+c);
+ if(multi){let all=true;for(const k of n)if(!sel.has(k))all=false;const u=new Set(sel);for(const k of n)all?u.delete(k):u.add(k);if(u.size)n=u}
+ sel=n;refresh();
+}
+addEventListener('pointerup',mend);addEventListener('pointercancel',mend);
+const cl=v=>Math.max(-1,Math.min(1,v)),r2=v=>Math.round(v*100)/100;
+function labelTxt(){
+ const a=[...sel];
+ if(a.length===1){const k=a[0];return EMO[(k/MK)|0]+'←'+EMO[k%MK]+'  '+M[k].toFixed(2)}
+ return '\u00a0';
+}
+function paint(){
+ for(let i=0;i<K;i++)for(let j=0;j<K;j++){const k=i*MK+j;cells[k].style.background=colorOf(M[k]);cells[k].classList.toggle('sel',sel.has(k))}
+ lab.textContent=labelTxt();
+}
+function refresh(){
+ paint();
+ let s=0;for(const k of sel)s+=M[k];sl.value=s/sel.size;
+ multiBtn.textContent='一括選択:'+(multi?'ON':'OFF');multiBtn.classList.toggle('on',multi);
+}
+sl.oninput=()=>{const v=parseFloat(sl.value);for(const k of sel)M[k]=v;paint()};
+const chip=(box,txt,fn)=>{const b=document.createElement('button');b.textContent=txt;b.onclick=fn;box.appendChild(b);return b};
+const selEl=document.getElementById('selt');
+const pick=f=>{const n=new Set();for(let i=0;i<K;i++)for(let j=0;j<K;j++)if(f(i,j,M[i*MK+j]))n.add(i*MK+j);if(n.size){sel=n;refresh()}};
+const multiBtn=chip(selEl,'一括選択:OFF',()=>{multi=!multi;refresh()});
+
+/* presets / buttons */
+const pre=document.getElementById('pre');
+refreshPresetOptions();
+function setK(k){K=k;sel=new Set([1]);multi=false;init();buildMat();refresh()}
+function loadPreset(name){
+ const q=PRESETS[name];if(!q)return;
+ K=q.k;
+ for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=Math.round(Math.max(-1,Math.min(1,q.f(i,j,K)))*100)/100;
+ Object.assign(p,{rmax:q.rmax,half:q.half,F:q.F,beta:q.beta});
+ sel=new Set([1]);multi=false;init();buildMat();refresh();syncMenu();
+}
+pre.onchange=()=>{
+ if(pre.value.startsWith('user:'))loadUserPreset(pre.value.slice(5));
+ else if(pre.value.startsWith('builtin:'))loadPreset(pre.value.slice(8));
+};
+document.getElementById('savePreset').onclick=saveUserPreset;
+document.getElementById('resetBoard').onclick=()=>{
+ if(!confirm('粒子を初期状態のように均一に再配置しますか？'))return;
+ init();
+};
+document.getElementById('rnd').onclick=()=>{
+ for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=Math.round((Math.random()*2-1)*100)/100;
+ refresh();
+};
+let run=true;const pb=document.getElementById('play');
+pb.onclick=()=>{run=!run;pb.textContent=run?'⏸':'▶'};
+
+/* perturbation: slowly random-walk palette matrix values */
+let perturbOn=false, perturbTick=0;
+const perturbButton=document.getElementById('perturb');
+function perturbPalette(){
+ // Nudge a few active palette cells slightly; keep values within [-1, 1].
+ const total=K*K;
+ const count=Math.max(1,Math.ceil(total*0.035));
+ for(let n=0;n<count;n++){
+  const i=(Math.random()*K)|0,j=(Math.random()*K)|0,k=i*MK+j;
+  const delta=(Math.random()*2-1)*0.1;
+  M[k]=Math.max(-1,Math.min(1,M[k]+delta));
+ }
+ refresh();
+}
+perturbButton.onclick=()=>{
+ perturbOn=!perturbOn;
+ perturbButton.textContent=perturbOn?'摂動モード：ON':'摂動モード：OFF';
+ perturbButton.style.borderColor=perturbOn?'#6ea8ff':'';
+};
+
+/* menu */
+const PDEF=[
+ ['N','点数',1000,15000,500],['K','色の種数',2,8,1],['rmax','作用半径',0.02,0.12,0.005],
+ ['dt','スピード',0.005,0.05,0.001],['half','慣性(半減期)',0.005,0.2,0.005],
+ ['F','力の強さ',0.05,3,0.05],['beta','斥力域',0.1,0.6,0.01],['size','点の大きさ',1,5,0.5],['burstR','バースト半径',0.05,0.5,0.01],['magR','マグネット半径',0.05,0.6,0.01]
+];
+const menu=document.getElementById('menu'),mrows={};
+const presetTools=document.createElement('div');
+presetTools.className='row';presetTools.style.margin='4px 0 10px';
+for(const [label,fn] of [['コード共有',shareConfigCode],['コード読込',importConfigCode]]){
+ const b=document.createElement('button');b.textContent=label;b.style.flex='1';b.onclick=fn;presetTools.appendChild(b);
+}
+menu.appendChild(presetTools);
+const guide=document.createElement('div');guide.className='small';guide.style.margin='0 0 10px';
+guide.innerHTML='【タイル】タップ=選択 / 長押し=一括選択モードON（もう一度長押しでOFF）/ モード中はなぞって自由な形に選択 / 絵文字の行・列タップ=行・列選択<br>【盤面】スワイプ=かき乱す / 長押し=マグネット / ダブルタップ=バースト';
+menu.appendChild(guide);
+const getP=k=>k==='N'?N:k==='K'?K:p[k];
+const fmt=(v,st)=>st>=1?String(Math.round(v)):v.toFixed(st<0.01?3:2);
+for(const [key,name,mn,mx,st] of PDEF){
+ const r=document.createElement('div');r.className='mrow';
+ const a=document.createElement('span');a.textContent=name;
+ const s=document.createElement('input');s.type='range';s.min=mn;s.max=mx;s.step=st;
+ const v=document.createElement('span');
+ s.oninput=()=>{
+  const x=parseFloat(s.value);v.textContent=fmt(x,st);
+  if(key!=='N'&&key!=='K')p[key]=x;
+ };
+ s.onchange=()=>{
+  const x=Math.round(parseFloat(s.value));
+  if(key==='N'){N=x;init()}
+  else if(key==='K'){
+   const old=K;
+   for(let i=0;i<x;i++)for(let j=0;j<x;j++)if(i>=old||j>=old)M[i*MK+j]=Math.round((Math.random()*2-1)*100)/100;
+   setK(x);
+  }
+ };
+ r.append(a,s,v);menu.appendChild(r);mrows[key]=[s,v,st];
+}
+function syncMenu(){for(const k in mrows){const [s,v,st]=mrows[k];s.value=getP(k);v.textContent=fmt(getP(k),st)}}
+const mb=document.getElementById('mbtn');
+mb.onclick=()=>{
+ const open=menu.style.display!=='block';
+ if(open){placeMenu();syncMenu()}
+ menu.style.display=open?'block':'none';mb.textContent=open?'✕':'☰';
+};
+
+loadPreset('循環追跡');
+addEventListener('resize',resize);resize();
+(function loop(){
+ if(run){for(const s of ptrs.values())if(s.mode==='magnet')magnetAt(s.x,s.y);step()}
+ if(perturbOn && ++perturbTick>=6){perturbTick=0;perturbPalette()}
+ draw();drawFx();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
