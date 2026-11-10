@@ -304,7 +304,7 @@ document.getElementById('resetBoard').onclick=()=>{
 document.getElementById('rnd').onclick=()=>{
  for(let i=0;i<K;i++)for(let j=0;j<K;j++)M[i*MK+j]=Math.round((Math.random()*2-1)*100)/100;
  p.rmax=0.04+Math.random()*0.04;p.half=0.02+Math.random()*0.1;p.F=0.3+Math.random()*0.9;p.beta=0.2+Math.random()*0.25;
- refresh();syncMenu();
+ refresh();
 };
 let run=true;const pb=document.getElementById('play');
 pb.onclick=()=>{run=!run;pb.textContent=run?'⏸':'▶'};
