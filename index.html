@@ -318,7 +318,7 @@ function perturbPalette(){
  const count=Math.max(1,Math.ceil(total*0.035));
  for(let n=0;n<count;n++){
   const i=(Math.random()*K)|0,j=(Math.random()*K)|0,k=i*MK+j;
-  const delta=(Math.random()*2-1)*0.035;
+  const delta=(Math.random()*2-1)*0.05;
   M[k]=Math.max(-1,Math.min(1,M[k]+delta));
  }
  refresh();
@@ -376,7 +376,7 @@ loadPreset('循環追跡');
 addEventListener('resize',resize);resize();
 (function loop(){
  if(run)step();
- if(perturbOn && ++perturbTick>=36){perturbTick=0;perturbPalette()}
+ if(perturbOn && ++perturbTick>=12){perturbTick=0;perturbPalette()}
  draw();requestAnimationFrame(loop);
 })();
 </script>
